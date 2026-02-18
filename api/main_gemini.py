@@ -4,9 +4,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google import genai
 from PIL import Image
+from dotenv import load_dotenv
 import json
 import io
 import base64
+import os
+
+# Lataa ymp‰ristˆmuuttujat .env-tiedostosta
+load_dotenv()
 
 app = FastAPI()
 app.add_middleware(
@@ -18,7 +23,11 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-API_KEY = "AIzaSyAtOT_ggwWMPvr9b8oCyswDDB9G53SFv2A"
+# API-avain ymp‰ristˆmuuttujasta - ƒLƒ kovakoodaa!
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    raise ValueError("GEMINI_API_KEY puuttuu! Lis‰‰ se .env-tiedostoon.")
+
 client = genai.Client(api_key=API_KEY)
 MODEL = "gemini-2.5-flash"
 
@@ -35,31 +44,30 @@ class AnalyzeRequest(BaseModel):
 @app.post("/generate")
 async def generate_kitchen(request: GenerateRequest):
     try:
-        # Jos on palautetta, k√§yt√§ sit√§
         feedback_context = ""
         if request.feedback and request.previous_data:
             feedback_context = f"""
 EDELLINEN VERSIO JA PALAUTE:
 {json.dumps(request.previous_data, indent=2, ensure_ascii=False)}
 
-K√§ytt√§j√§n palaute/edellisen version ongelmat:
+K‰ytt‰j‰n palaute/edellisen version ongelmat:
 {request.feedback}
 
-Korjaa yll√§ olevaan keitti√∂√∂n mainitut ongelmat. S√§ilyt√§ toimivat osat.
+Korjaa yll‰ olevaan keittiˆˆn mainitut ongelmat. S‰ilyt‰ toimivat osat.
 """
         
         prompt = f"""
-Luo keitti√∂suunnitelma JSON-muodossa.
+Luo keittiˆsuunnitelma JSON-muodossa.
 
-{feedback_context if feedback_context else f"K√§ytt√§j√§n kuvaus: {request.description}"}
+{feedback_context if feedback_context else f"K‰ytt‰j‰n kuvaus: {request.description}"}
 
 Vastaa VAIN JSON:
 
 {{
-  "nimi": "Keitti√∂n nimi",
+  "nimi": "Keittiˆn nimi",
   "iteraatio": {request.iteration + 1},
   "mitat": {{"leveys_mm": 4000, "syvyys_mm": 3000, "korkeus_mm": 2700}},
-  "parannukset": "Mit√§ parannettiin t√§h√§n versioon",
+  "parannukset": "Mit‰ parannettiin t‰h‰n versioon",
   "kaapit": [...],
   "kodinkoneet": [...]
 }}
@@ -67,7 +75,6 @@ Vastaa VAIN JSON:
         
         response = client.models.generate_content(model=MODEL, contents=prompt)
         
-        # Puhdista JSON
         text = response.text
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
@@ -81,13 +88,11 @@ Vastaa VAIN JSON:
         
         data = json.loads(text)
         
-        # Varmista kent√§t
         if "kaapit" not in data: data["kaapit"] = []
         if "kodinkoneet" not in data: data["kodinkoneet"] = []
         if "mitat" not in data: data["mitat"] = {"leveys_mm": 4000, "syvyys_mm": 3000}
         if "parannukset" not in data: data["parannukset"] = f"Iteraatio {request.iteration + 1}"
         
-        # Lis√§√§ sijainnit
         x_pos = 0
         for k in data["kaapit"]:
             if "x" not in k: 
@@ -113,36 +118,33 @@ Vastaa VAIN JSON:
 
 @app.post("/analyze")
 async def analyze_kitchen(request: AnalyzeRequest):
-    """Gemini analysoi 3D-kuvan ja antaa parannusehdotukset"""
     try:
-        # Dekoodaa kuva
         image_bytes = base64.b64decode(request.image_base64.split(",")[1])
         image = Image.open(io.BytesIO(image_bytes))
         
         prompt = f"""
-Analysoi t√§m√§ keitti√∂n 3D-malli. 
+Analysoi t‰m‰ keittiˆn 3D-malli. 
 
 Nykyinen suunnitelma:
 {json.dumps(request.current_data, indent=2, ensure_ascii=False)}
 
 Tarkista:
-1. Toimiiko ty√∂kolmio (j√§√§kaappi-liesi-allas)?
+1. Toimiiko tyˆkolmio (j‰‰kaappi-liesi-allas)?
 2. Onko tilaa liikkua?
 3. Onko kaapit sijoitettu loogisesti?
-4. Puuttuuko jotain t√§rke√§√§?
+4. Puuttuuko jotain t‰rke‰‰?
 
 Vastaa JSON:
 {{
   "toimiva": true/false,
   "ongelmat": ["lista ongelmista"],
-  "parannusehdotukset": "Mit√§ pit√§√§ muuttaa",
+  "parannusehdotukset": "Mit‰ pit‰‰ muuttaa",
   "seuraava_askel": "Tarkka kuvaus miten korjata"
 }}
 """
         
         response = client.models.generate_content(model=MODEL, contents=[prompt, image])
         
-        # Parsi JSON
         text = response.text
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
